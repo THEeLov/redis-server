@@ -1,0 +1,76 @@
+use nix::sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout};
+use std::io;
+use std::io::Read;
+use std::os::unix::net::{SocketAddr, UnixStream};
+
+use redis_server::listener;
+
+const SOCKET_PATH: &str = "/tmp/myredis.sock";
+const MAX_CAPACITY: usize = 5;
+const EPOLL_BUFFER: usize = 1024;
+
+struct Connection {
+    stream: UnixStream,
+    input: Vec<u8>,
+    closed: bool,
+    sock_addr: SocketAddr,
+}
+
+fn main() -> io::Result<()> {
+    let listener = listener::socket_setup(SOCKET_PATH)?;
+    println!("listening on socket {SOCKET_PATH}");
+
+    let mut clients: Vec<Connection> = Vec::with_capacity(MAX_CAPACITY);
+    let epoll = Epoll::new(EpollCreateFlags::empty())?;
+    epoll.add(&listener, EpollEvent::new(EpollFlags::EPOLLIN, 0))?;
+
+    let mut events = [EpollEvent::empty(); EPOLL_BUFFER];
+    let mut buffer = [0u8; 1024];
+    loop {
+        // Create the vector for polling
+        let n = epoll.wait(&mut events, EpollTimeout::NONE)?;
+
+        for event in &events[..n] {
+            let token = event.data();
+
+            if token == 0 {
+                // Listener: accept, register with epoll, store.
+                let Ok((stream, sock_addr)) = listener.accept() else {
+                    continue;
+                };
+                if stream.set_nonblocking(true).is_err() {
+                    continue;
+                }
+
+                let fd = stream.as_raw_fd() as u64;
+                if epoll
+                    .add(&stream, EpollEvent::new(EpollFlags::EPOLLIN, fd))
+                    .is_err()
+                {
+                    continue;
+                }
+
+                clients.insert(
+                    fd,
+                    Connection {
+                        stream,
+                        input: Vec::new(),
+                        closed: false,
+                        sock_addr,
+                    },
+                );
+                continue; // don't fall through to the client code
+            }
+
+            // Client: look it up by token.
+            let Some(client) = clients.get_mut(&token) else {
+                continue; // stale event for a client already removed
+            };
+
+            match client.stream.read(&mut buffer) {
+                Ok(0) | Err(_) => client.closed = true,
+                Ok(n) => client.input.extend_from_slice(&buffer[..n]),
+            }
+        }
+    }
+}
