@@ -1,6 +1,8 @@
 use nix::sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout};
+use std::collections::HashMap;
 use std::io;
 use std::io::Read;
+use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::net::{SocketAddr, UnixStream};
 
 use redis_server::listener;
@@ -16,25 +18,25 @@ struct Connection {
     sock_addr: SocketAddr,
 }
 
+#[allow(clippy::cast_sign_loss)]
 fn main() -> io::Result<()> {
     let listener = listener::socket_setup(SOCKET_PATH)?;
     println!("listening on socket {SOCKET_PATH}");
 
-    let mut clients: Vec<Connection> = Vec::with_capacity(MAX_CAPACITY);
+    let mut clients: HashMap<u64, Connection> = HashMap::new();
+
     let epoll = Epoll::new(EpollCreateFlags::empty())?;
     epoll.add(&listener, EpollEvent::new(EpollFlags::EPOLLIN, 0))?;
 
     let mut events = [EpollEvent::empty(); EPOLL_BUFFER];
     let mut buffer = [0u8; 1024];
     loop {
-        // Create the vector for polling
         let n = epoll.wait(&mut events, EpollTimeout::NONE)?;
 
         for event in &events[..n] {
             let token = event.data();
 
             if token == 0 {
-                // Listener: accept, register with epoll, store.
                 let Ok((stream, sock_addr)) = listener.accept() else {
                     continue;
                 };
@@ -69,7 +71,7 @@ fn main() -> io::Result<()> {
 
             match client.stream.read(&mut buffer) {
                 Ok(0) | Err(_) => client.closed = true,
-                Ok(n) => client.input.extend_from_slice(&buffer[..n]),
+                Ok(n) => print!("{n} bytes: {}", String::from_utf8_lossy(&buffer[..n])),
             }
         }
     }
