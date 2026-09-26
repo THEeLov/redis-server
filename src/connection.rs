@@ -1,7 +1,10 @@
 use nix::sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout};
 use std::{
     io::{self, Read},
-    os::{fd::AsRawFd, unix::net::UnixListener},
+    os::{
+        fd::{AsFd, AsRawFd},
+        unix::net::UnixListener,
+    },
 };
 use tracing::{debug, error, info, trace};
 
@@ -13,6 +16,34 @@ use client::Clients;
 use crate::connection::accept::accept_client;
 
 const EPOLL_BUFFER: usize = 1024;
+
+struct Server {
+    listener: UnixListener,
+    clients: Clients,
+    poller: Epoll,
+    events: [EpollEvent; 1024],
+}
+
+impl Server {
+    pub fn build(listener: UnixListener) -> io::Result<Server> {
+        Ok(Server {
+            listener,
+            clients: Clients::new(),
+            poller: Epoll::new(EpollCreateFlags::empty())?,
+            events: [EpollEvent::empty(); EPOLL_BUFFER],
+        })
+    }
+
+    pub fn add_poller<Fd: AsFd>(&mut self, fd: Fd, event: EpollEvent) -> io::Result<()> {
+        self.poller.add(&fd, event)?;
+        Ok(())
+    }
+
+    pub fn remove_poller<Fd: AsFd>(&mut self, fd: Fd) -> io::Result<()> {
+        self.poller.delete(&fd)?;
+        Ok(())
+    }
+}
 
 /// Runs the epoll event loop: accepts new clients on `listener` and reads
 /// incoming data from connected clients. Only returns on error.
