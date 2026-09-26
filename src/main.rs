@@ -11,6 +11,7 @@ const SOCKET_PATH: &str = "/tmp/myredis.sock";
 const MAX_CAPACITY: usize = 5;
 const EPOLL_BUFFER: usize = 1024;
 
+#[derive(Debug)]
 struct Connection {
     stream: UnixStream,
     input: Vec<u8>,
@@ -31,7 +32,9 @@ fn main() -> io::Result<()> {
     let mut events = [EpollEvent::empty(); EPOLL_BUFFER];
     let mut buffer = [0u8; 1024];
     loop {
+        println!("Started polling");
         let n = epoll.wait(&mut events, EpollTimeout::NONE)?;
+        println!("End of polling");
 
         for event in &events[..n] {
             let token = event.data();
@@ -40,6 +43,8 @@ fn main() -> io::Result<()> {
                 let Ok((stream, sock_addr)) = listener.accept() else {
                     continue;
                 };
+                println!("Accepted client with fd: {}", stream.as_raw_fd());
+
                 if stream.set_nonblocking(true).is_err() {
                     continue;
                 }
@@ -61,18 +66,29 @@ fn main() -> io::Result<()> {
                         sock_addr,
                     },
                 );
-                continue; // don't fall through to the client code
+
+                println!("{clients:?}");
+                continue;
             }
 
-            // Client: look it up by token.
+            // Now lets handle clients
             let Some(client) = clients.get_mut(&token) else {
-                continue; // stale event for a client already removed
+                continue;
             };
 
-            match client.stream.read(&mut buffer) {
-                Ok(0) | Err(_) => client.closed = true,
-                Ok(n) => print!("{n} bytes: {}", String::from_utf8_lossy(&buffer[..n])),
+            let Ok(nbytes) = client.stream.read(&mut buffer) else {
+                println!("Error in client");
+                continue;
+            };
+
+            if nbytes == 0 {
+                // TODO: handle close by client
             }
+
+            println!(
+                "{nbytes} bytes: {}",
+                String::from_utf8_lossy(&buffer[..nbytes])
+            );
         }
     }
 }
