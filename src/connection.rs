@@ -3,7 +3,7 @@ use std::{
     io::{self, Read},
     os::{fd::AsRawFd, unix::net::UnixListener},
 };
-use tracing::*;
+use tracing::{debug, error, info, trace};
 
 pub mod client;
 
@@ -28,7 +28,7 @@ pub fn handle_connections(listener: UnixListener) -> io::Result<()> {
             let token = event.data();
 
             if token == 0 {
-                let Ok((stream, sock_addr)) = listener.accept() else {
+                let Ok((stream, _)) = listener.accept() else {
                     continue;
                 };
                 let fd = stream.as_raw_fd() as u64;
@@ -46,7 +46,7 @@ pub fn handle_connections(listener: UnixListener) -> io::Result<()> {
                     continue;
                 }
 
-                let new_client = Client::new(stream, sock_addr);
+                let new_client = Client::new(stream);
 
                 clients.add_client(new_client);
 
@@ -74,5 +74,4 @@ pub fn handle_connections(listener: UnixListener) -> io::Result<()> {
             );
         }
     }
-    Ok(())
 }
