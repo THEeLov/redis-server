@@ -5,12 +5,23 @@ use std::{
 };
 use tracing::{debug, error, info, trace};
 
+pub mod accept;
 pub mod client;
 
-use client::{Client, Clients};
+use client::Clients;
+
+use crate::connection::accept::accept_client;
 
 const EPOLL_BUFFER: usize = 1024;
 
+/// Runs the epoll event loop: accepts new clients on `listener` and reads
+/// incoming data from connected clients. Only returns on error.
+///
+/// # Errors
+///
+/// Returns an error if the epoll instance cannot be created, the listener
+/// cannot be registered with it, waiting for events fails, or accepting a
+/// new client fails.
 pub fn handle_connections(listener: UnixListener) -> io::Result<()> {
     let mut clients: Clients = Clients::new();
 
@@ -27,30 +38,22 @@ pub fn handle_connections(listener: UnixListener) -> io::Result<()> {
         for event in &events[..n] {
             let token = event.data();
 
+            // Accepting client
             if token == 0 {
-                let Ok((stream, _)) = listener.accept() else {
-                    continue;
-                };
-                let fd = stream.as_raw_fd() as u64;
-
-                info!(fd, "accepted client");
-
-                if stream.set_nonblocking(true).is_err() {
-                    continue;
-                }
+                let new_client = accept_client(&listener)?;
 
                 if epoll
-                    .add(&stream, EpollEvent::new(EpollFlags::EPOLLIN, fd))
+                    .add(
+                        &new_client.stream,
+                        EpollEvent::new(EpollFlags::EPOLLIN, new_client.stream.as_raw_fd() as u64),
+                    )
                     .is_err()
                 {
                     continue;
                 }
 
-                let new_client = Client::new(stream);
-
                 clients.add_client(new_client);
 
-                debug!("{clients:?}");
                 continue;
             }
 
