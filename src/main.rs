@@ -4,6 +4,7 @@ use std::io;
 use std::io::Read;
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::net::{SocketAddr, UnixStream};
+use tracing::{debug, error, info, trace, warn};
 
 use redis_server::listener;
 
@@ -21,8 +22,12 @@ struct Connection {
 
 #[allow(clippy::cast_sign_loss)]
 fn main() -> io::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
     let listener = listener::socket_setup(SOCKET_PATH)?;
-    println!("listening on socket {SOCKET_PATH}");
+    info!(path = SOCKET_PATH, "listening");
 
     let mut clients: HashMap<u64, Connection> = HashMap::new();
 
@@ -32,9 +37,9 @@ fn main() -> io::Result<()> {
     let mut events = [EpollEvent::empty(); EPOLL_BUFFER];
     let mut buffer = [0u8; 1024];
     loop {
-        println!("Started polling");
+        trace!("waiting for events");
         let n = epoll.wait(&mut events, EpollTimeout::NONE)?;
-        println!("End of polling");
+        trace!(n, "got events");
 
         for event in &events[..n] {
             let token = event.data();
@@ -43,13 +48,14 @@ fn main() -> io::Result<()> {
                 let Ok((stream, sock_addr)) = listener.accept() else {
                     continue;
                 };
-                println!("Accepted client with fd: {}", stream.as_raw_fd());
+                let fd = stream.as_raw_fd() as u64;
+
+                info!(fd, "accepted client");
 
                 if stream.set_nonblocking(true).is_err() {
                     continue;
                 }
 
-                let fd = stream.as_raw_fd() as u64;
                 if epoll
                     .add(&stream, EpollEvent::new(EpollFlags::EPOLLIN, fd))
                     .is_err()
@@ -67,7 +73,7 @@ fn main() -> io::Result<()> {
                     },
                 );
 
-                println!("{clients:?}");
+                debug!("{clients:?}");
                 continue;
             }
 
@@ -77,7 +83,7 @@ fn main() -> io::Result<()> {
             };
 
             let Ok(nbytes) = client.stream.read(&mut buffer) else {
-                println!("Error in client");
+                error!(fd = client.stream.as_raw_fd(), "error reading from client");
                 continue;
             };
 
@@ -85,7 +91,7 @@ fn main() -> io::Result<()> {
                 // TODO: handle close by client
             }
 
-            println!(
+            debug!(
                 "{nbytes} bytes: {}",
                 String::from_utf8_lossy(&buffer[..nbytes])
             );
