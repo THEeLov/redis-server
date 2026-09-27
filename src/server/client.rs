@@ -1,9 +1,9 @@
 use std::{
     collections::HashMap,
-    io::Read,
+    io::{Read, Write},
     os::{fd::AsRawFd, unix::net::UnixStream},
 };
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 #[derive(Debug)]
 pub struct Client {
@@ -26,11 +26,17 @@ impl Client {
         let mut buffer = [0u8; 1024];
         let Ok(nbytes) = self.stream.read(&mut buffer) else {
             error!(fd = self.stream.as_raw_fd(), "error reading from client");
+            self.closed = true;
             return;
         };
 
         if nbytes == 0 {
-            // TODO: handle close by client
+            self.closed = true;
+        }
+
+        if let Err(e) = self.stream.write_all(b"Thank you\n") {
+            warn!(error = %e, "failed to write reply");
+            self.closed = true;
         }
 
         debug!(
@@ -53,13 +59,13 @@ impl Clients {
         }
     }
 
-    pub fn get_mut_client(&mut self, fd: &u64) -> Option<&mut Client> {
-        self.clients.get_mut(fd)
+    pub fn get_mut_client(&mut self, fd: u64) -> Option<&mut Client> {
+        self.clients.get_mut(&fd)
     }
 
     #[must_use]
-    pub fn get_client(&self, fd: &u64) -> Option<&Client> {
-        self.clients.get(fd)
+    pub fn get_client(&self, fd: u64) -> Option<&Client> {
+        self.clients.get(&fd)
     }
 
     /// Adds a client and registers it under its file descriptor.
@@ -74,7 +80,7 @@ impl Clients {
         self.clients.insert(fd, client);
     }
 
-    pub fn remove_client(&mut self, fd: u64) {
-        self.clients.remove(&fd);
+    pub fn remove_client(&mut self, fd: u64) -> Option<Client> {
+        self.clients.remove(&fd)
     }
 }

@@ -50,22 +50,28 @@ impl Server {
     pub fn run(&mut self) -> io::Result<()> {
         loop {
             trace!("waiting for events");
-            let tokens = self.poller.wait()?;
-            trace!(n = tokens.len(), "got events");
+            let fds = self.poller.wait()?;
+            trace!(n = fds.len(), "got events");
 
-            for token in tokens {
+            for fd in fds {
                 // Accept client if listener has POLLIN
-                if token == 0 {
+                if fd == 0 {
                     self.accept_client();
                     continue;
                 }
 
                 // Otherwise handle client request
-                let Some(client) = self.clients.get_mut_client(&token) else {
+                let Some(client) = self.clients.get_mut_client(fd) else {
                     continue;
                 };
 
                 client.handle_client();
+
+                let closed = client.closed;
+
+                if closed {
+                    self.remove_client(fd);
+                }
             }
         }
     }
@@ -98,6 +104,20 @@ impl Server {
 
         self.clients.add_client(Client::new(stream));
         info!(fd, "accepted client");
+    }
+
+    /// Removes the client registered under `fd`, deregisters it from the
+    /// poller and drops it, which closes its connection.
+    ///
+    /// Does nothing if no client is registered under `fd`. A failure to
+    /// deregister is logged, and the client is still dropped.
+    fn remove_client(&mut self, fd: u64) {
+        if let Some(client) = self.clients.remove_client(fd) {
+            if let Err(e) = self.poller.deregister(&client.stream) {
+                warn!(fd = fd, error = %e, "failed to deregister client");
+            }
+            info!(fd = fd, "client disconnected");
+        }
     }
 
     /// Creates the server's non-blocking listening Unix socket at `path`,
