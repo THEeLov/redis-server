@@ -1,18 +1,20 @@
+//! Unix socket server that multiplexes client connections with `epoll`.
+
 use crate::poller::Poller;
-use nix::sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout};
+use nix::sys::epoll::{EpollEvent, EpollFlags};
 use std::{
-    io::{self, Read},
-    os::{
-        fd::{AsFd, AsRawFd},
-        unix::net::UnixListener,
-    },
+    io,
+    os::{fd::AsRawFd, unix::net::UnixListener},
 };
-use tracing::{debug, error, info, trace};
+use tracing::{info, trace};
+/// Connected clients and their per-connection state.
 pub mod client;
 use client::{Client, Clients};
 
 const EPOLL_BUFFER: usize = 1024;
 
+/// Server that accepts clients on a [`UnixListener`] and dispatches their
+/// events through an `epoll`-based [`Poller`].
 pub struct Server {
     listener: UnixListener,
     clients: Clients,
@@ -20,6 +22,13 @@ pub struct Server {
 }
 
 impl Server {
+    /// Creates a server around `listener` and registers the listener with
+    /// the poller under token `0`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the `epoll` instance cannot be created or the
+    /// listener cannot be registered with it.
     pub fn build(listener: UnixListener) -> io::Result<Self> {
         let mut server = Self {
             listener,
@@ -33,8 +42,15 @@ impl Server {
         Ok(server)
     }
 
+    /// Runs the event loop: accepts new clients on the listener and hands
+    /// events from connected clients to their handlers. Only returns on error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if waiting for events fails or accepting a new
+    /// client fails.
+    #[allow(clippy::cast_sign_loss)]
     pub fn handle_connections(&mut self) -> io::Result<()> {
-        let mut buffer = [0u8; 1024];
         loop {
             trace!("waiting for events");
             let n = self.poller.wait_poller()?;
@@ -60,7 +76,6 @@ impl Server {
                     continue;
                 }
 
-                // Now lets handle clients
                 let Some(client) = self.clients.get_mut_client(&token) else {
                     continue;
                 };
@@ -70,12 +85,12 @@ impl Server {
         }
     }
 
+    /// Accepts a pending connection on the listener and wraps it in a
+    /// non-blocking [`Client`].
     #[allow(clippy::cast_sign_loss)]
     fn accept_client(&self) -> io::Result<Client> {
         let (stream, _) = self.listener.accept()?;
-
         let fd = stream.as_raw_fd() as u64;
-
         info!(fd, "accepted client");
 
         stream.set_nonblocking(true)?;
