@@ -1,15 +1,16 @@
 //! Thin wrapper around a Linux `epoll` instance.
+//!
+//! Callers identify file descriptors by `u64` tokens and never see `nix`
+//! types; all of `epoll` is contained in this module.
 
-use nix::sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollTimeout};
+use nix::sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout};
 use std::{io, os::fd::AsFd};
 
-/// An `epoll` instance paired with a fixed-size buffer of `N` events that
-/// [`Poller::wait_poller`] fills in.
+/// An `epoll` instance paired with a fixed-size buffer that holds up to `N`
+/// ready events per call to [`Poller::wait`].
 pub struct Poller<const N: usize> {
     poller: Epoll,
-    /// Buffer of ready events written by the last call to [`Poller::wait_poller`].
-    /// Only the first `n` entries are valid, where `n` is the value it returned.
-    pub events: [EpollEvent; N],
+    events: [EpollEvent; N],
 }
 
 impl<const N: usize> Poller<N> {
@@ -25,15 +26,16 @@ impl<const N: usize> Poller<N> {
         })
     }
 
-    /// Registers `fd` with the `epoll` instance, watching for the flags in
-    /// `event` and tagging it with the event's data.
+    /// Registers `fd` for readability, so that [`Poller::wait`] reports
+    /// `token` whenever `fd` has data to read.
     ///
     /// # Errors
     ///
     /// Returns an error if `fd` is already registered or cannot be added to
     /// the `epoll` instance.
-    pub fn add_poller<Fd: AsFd>(&mut self, fd: Fd, event: EpollEvent) -> io::Result<()> {
-        self.poller.add(&fd, event)?;
+    pub fn register<Fd: AsFd>(&mut self, fd: Fd, token: u64) -> io::Result<()> {
+        self.poller
+            .add(&fd, EpollEvent::new(EpollFlags::EPOLLIN, token))?;
         Ok(())
     }
 
@@ -43,22 +45,19 @@ impl<const N: usize> Poller<N> {
     ///
     /// Returns an error if `fd` is not registered or cannot be removed from
     /// the `epoll` instance.
-    pub fn remove_poller<Fd: AsFd>(&mut self, fd: Fd) -> io::Result<()> {
+    pub fn deregister<Fd: AsFd>(&mut self, fd: Fd) -> io::Result<()> {
         self.poller.delete(&fd)?;
         Ok(())
     }
 
-    /// Blocks until at least one registered file descriptor is ready, then
-    /// stores the ready events in [`Poller::events`].
-    ///
-    /// Returns the number of events written to the buffer.
+    /// Blocks until at least one registered file descriptor is ready and
+    /// returns the tokens of the ready ones, at most `N` per call.
     ///
     /// # Errors
     ///
     /// Returns an error if waiting on the `epoll` instance fails.
-    pub fn wait_poller(&mut self) -> io::Result<usize> {
-        self.poller
-            .wait(&mut self.events, EpollTimeout::NONE)
-            .map_err(io::Error::from)
+    pub fn wait(&mut self) -> io::Result<Vec<u64>> {
+        let n = self.poller.wait(&mut self.events, EpollTimeout::NONE)?;
+        Ok(self.events[..n].iter().map(EpollEvent::data).collect())
     }
 }

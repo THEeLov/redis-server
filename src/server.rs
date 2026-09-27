@@ -1,7 +1,6 @@
 //! Unix socket server that multiplexes client connections with `epoll`.
 
 use crate::poller::Poller;
-use nix::sys::epoll::{EpollEvent, EpollFlags};
 use std::{
     fs, io,
     os::{fd::AsRawFd, unix::net::UnixListener},
@@ -37,9 +36,7 @@ impl Server {
             poller: Poller::build()?,
         };
 
-        server
-            .poller
-            .add_poller(&server.listener, EpollEvent::new(EpollFlags::EPOLLIN, 0))?;
+        server.poller.register(&server.listener, 0)?;
         Ok(server)
     }
 
@@ -53,12 +50,10 @@ impl Server {
     pub fn handle_connections(&mut self) -> io::Result<()> {
         loop {
             trace!("waiting for events");
-            let n = self.poller.wait_poller()?;
-            trace!(n, "got events");
+            let tokens = self.poller.wait()?;
+            trace!(n = tokens.len(), "got events");
 
-            for i in 0..n {
-                let token = self.poller.events[i].data();
-
+            for token in tokens {
                 // Accept client if listener has POLLIN
                 if token == 0 {
                     self.accept_client();
@@ -96,10 +91,7 @@ impl Server {
             return;
         }
 
-        if let Err(e) = self
-            .poller
-            .add_poller(&stream, EpollEvent::new(EpollFlags::EPOLLIN, fd))
-        {
+        if let Err(e) = self.poller.register(&stream, fd) {
             warn!(fd, error = %e, "failed to register client with epoll, dropping it");
             return;
         }
