@@ -22,13 +22,14 @@ pub struct Server {
 }
 
 impl Server {
-    /// Creates a server around `listener` and registers the listener with
-    /// the poller under token `0`.
+    /// Creates a server listening on the Unix socket at `socket_path` and
+    /// registers the listener with the poller under token `0`.
     ///
     /// # Errors
     ///
-    /// Returns an error if the `epoll` instance cannot be created or the
-    /// listener cannot be registered with it.
+    /// Returns an error if the socket cannot be set up (see
+    /// [`Server::socket_setup`]), the `epoll` instance cannot be created, or
+    /// the listener cannot be registered with it.
     pub fn build(socket_path: &str) -> io::Result<Self> {
         let mut server = Self {
             listener: Self::socket_setup(socket_path)?,
@@ -47,9 +48,8 @@ impl Server {
     ///
     /// # Errors
     ///
-    /// Returns an error if waiting for events fails or accepting a new
-    /// client fails.
-    #[allow(clippy::cast_sign_loss)]
+    /// Returns an error if waiting for events fails. Failures to accept or
+    /// register a single client are logged and do not stop the loop.
     pub fn handle_connections(&mut self) -> io::Result<()> {
         loop {
             trace!("waiting for events");
@@ -75,8 +75,10 @@ impl Server {
         }
     }
 
-    /// Accepts a pending connection on the listener and wraps it in a
-    /// non-blocking [`Client`].
+    /// Accepts a pending connection on the listener, makes it non-blocking,
+    /// registers it with the poller and stores it as a [`Client`].
+    ///
+    /// Any failure is logged and the connection is dropped.
     #[allow(clippy::cast_sign_loss)]
     fn accept_client(&mut self) {
         let stream = match self.listener.accept() {
@@ -107,12 +109,14 @@ impl Server {
         info!(fd, "accepted client");
     }
 
-    /// Creates and binds the server's listening socket.
+    /// Creates the server's listening Unix socket at `path`, first removing
+    /// any file left there by a previous run.
     ///
     /// # Errors
     ///
-    /// Returns an error if the address is already in use or
-    /// the process lacks permission to bind to the port.
+    /// Returns an error if an existing file at `path` cannot be removed, or
+    /// if binding fails, for example because the parent directory does not
+    /// exist or the process lacks permission to create the socket there.
     pub fn socket_setup(path: &str) -> Result<UnixListener, io::Error> {
         match fs::remove_file(path) {
             Ok(()) => {}
