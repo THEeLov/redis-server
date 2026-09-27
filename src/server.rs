@@ -3,10 +3,10 @@
 use crate::poller::Poller;
 use nix::sys::epoll::{EpollEvent, EpollFlags};
 use std::{
-    io,
+    fs, io,
     os::{fd::AsRawFd, unix::net::UnixListener},
 };
-use tracing::{info, trace};
+use tracing::{info, trace, warn};
 /// Connected clients and their per-connection state.
 pub mod client;
 use client::{Client, Clients};
@@ -29,9 +29,9 @@ impl Server {
     ///
     /// Returns an error if the `epoll` instance cannot be created or the
     /// listener cannot be registered with it.
-    pub fn build(listener: UnixListener) -> io::Result<Self> {
+    pub fn build(socket_path: &str) -> io::Result<Self> {
         let mut server = Self {
-            listener,
+            listener: Self::socket_setup(socket_path)?,
             clients: Clients::new(),
             poller: Poller::build()?,
         };
@@ -59,23 +59,13 @@ impl Server {
             for i in 0..n {
                 let token = self.poller.events[i].data();
 
-                // Accepting client
+                // Accept client if listener has POLLIN
                 if token == 0 {
-                    let new_client = self.accept_client()?;
-                    let fd = new_client.stream.as_raw_fd() as u64;
-
-                    let Ok(()) = self
-                        .poller
-                        .add_poller(&new_client.stream, EpollEvent::new(EpollFlags::EPOLLIN, fd))
-                    else {
-                        continue;
-                    };
-
-                    self.clients.add_client(new_client);
-
+                    self.accept_client();
                     continue;
                 }
 
+                // Otherwise handle client request
                 let Some(client) = self.clients.get_mut_client(&token) else {
                     continue;
                 };
@@ -88,13 +78,48 @@ impl Server {
     /// Accepts a pending connection on the listener and wraps it in a
     /// non-blocking [`Client`].
     #[allow(clippy::cast_sign_loss)]
-    fn accept_client(&self) -> io::Result<Client> {
-        let (stream, _) = self.listener.accept()?;
+    fn accept_client(&mut self) {
+        let stream = match self.listener.accept() {
+            Ok((stream, _)) => stream,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return, // nothing was waiting
+            Err(e) => {
+                warn!(error = %e, "failed to accept client");
+                return;
+            }
+        };
+
         let fd = stream.as_raw_fd() as u64;
+
+        if let Err(e) = stream.set_nonblocking(true) {
+            warn!(fd, error = %e, "failed to set client non-blocking, dropping it");
+            return;
+        }
+
+        if let Err(e) = self
+            .poller
+            .add_poller(&stream, EpollEvent::new(EpollFlags::EPOLLIN, fd))
+        {
+            warn!(fd, error = %e, "failed to register client with epoll, dropping it");
+            return;
+        }
+
+        self.clients.add_client(Client::new(stream));
         info!(fd, "accepted client");
+    }
 
-        stream.set_nonblocking(true)?;
+    /// Creates and binds the server's listening socket.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the address is already in use or
+    /// the process lacks permission to bind to the port.
+    pub fn socket_setup(path: &str) -> Result<UnixListener, io::Error> {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
 
-        Ok(Client::new(stream))
+        UnixListener::bind(path)
     }
 }

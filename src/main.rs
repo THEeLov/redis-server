@@ -2,8 +2,6 @@ use redis_server::server::Server;
 use std::io;
 use tracing::info;
 
-use redis_server::listener;
-
 const SOCKET_PATH: &str = "/tmp/myredis.sock";
 
 fn main() -> io::Result<()> {
@@ -11,10 +9,8 @@ fn main() -> io::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let listener = listener::socket_setup(SOCKET_PATH)?;
+    let mut server = Server::build(SOCKET_PATH)?;
     info!(path = SOCKET_PATH, "listening");
-
-    let mut server = Server::build(listener)?;
 
     server.handle_connections()?;
 
