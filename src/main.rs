@@ -12,7 +12,7 @@ fn main() -> io::Result<()> {
     let mut server = Server::build(SOCKET_PATH)?;
     info!(path = SOCKET_PATH, "listening");
 
-    server.handle_connections()?;
+    server.run()?;
 
     Ok(())
 }

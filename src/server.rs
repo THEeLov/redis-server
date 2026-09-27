@@ -47,7 +47,7 @@ impl Server {
     ///
     /// Returns an error if waiting for events fails. Failures to accept or
     /// register a single client are logged and do not stop the loop.
-    pub fn handle_connections(&mut self) -> io::Result<()> {
+    pub fn run(&mut self) -> io::Result<()> {
         loop {
             trace!("waiting for events");
             let tokens = self.poller.wait()?;
@@ -109,7 +109,7 @@ impl Server {
     /// binding fails, for example because the parent directory does not
     /// exist or the process lacks permission to create the socket there, or
     /// if the listener cannot be switched to non-blocking mode.
-    pub fn socket_setup(path: &str) -> Result<UnixListener, io::Error> {
+    fn socket_setup(path: &str) -> Result<UnixListener, io::Error> {
         match fs::remove_file(path) {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
