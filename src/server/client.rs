@@ -19,6 +19,8 @@ impl Client {
             closed: false,
         }
     }
+
+    pub fn handle_client() {}
 }
 
 #[derive(Default, Debug)]

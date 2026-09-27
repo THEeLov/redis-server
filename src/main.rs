@@ -1,4 +1,4 @@
-use redis_server::connection::handle_connections;
+use redis_server::server::Server;
 use std::io;
 use tracing::info;
 
@@ -14,7 +14,9 @@ fn main() -> io::Result<()> {
     let listener = listener::socket_setup(SOCKET_PATH)?;
     info!(path = SOCKET_PATH, "listening");
 
-    handle_connections(listener)?;
+    let mut server = Server::build(listener)?;
+
+    server.handle_connections()?;
 
     Ok(())
 }
