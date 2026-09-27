@@ -83,7 +83,6 @@ impl Server {
     fn accept_client(&mut self) {
         let stream = match self.listener.accept() {
             Ok((stream, _)) => stream,
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return, // nothing was waiting
             Err(e) => {
                 warn!(error = %e, "failed to accept client");
                 return;
@@ -109,14 +108,15 @@ impl Server {
         info!(fd, "accepted client");
     }
 
-    /// Creates the server's listening Unix socket at `path`, first removing
-    /// any file left there by a previous run.
+    /// Creates the server's non-blocking listening Unix socket at `path`,
+    /// first removing any file left there by a previous run.
     ///
     /// # Errors
     ///
-    /// Returns an error if an existing file at `path` cannot be removed, or
-    /// if binding fails, for example because the parent directory does not
-    /// exist or the process lacks permission to create the socket there.
+    /// Returns an error if an existing file at `path` cannot be removed, if
+    /// binding fails, for example because the parent directory does not
+    /// exist or the process lacks permission to create the socket there, or
+    /// if the listener cannot be switched to non-blocking mode.
     pub fn socket_setup(path: &str) -> Result<UnixListener, io::Error> {
         match fs::remove_file(path) {
             Ok(()) => {}
@@ -124,6 +124,8 @@ impl Server {
             Err(e) => return Err(e),
         }
 
-        UnixListener::bind(path)
+        let listener = UnixListener::bind(path)?;
+        listener.set_nonblocking(true)?;
+        Ok(listener)
     }
 }
