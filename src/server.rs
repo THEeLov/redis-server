@@ -46,11 +46,12 @@ impl Server {
                 // Accepting client
                 if token == 0 {
                     let new_client = self.accept_client()?;
+                    let fd = new_client.stream.as_raw_fd() as u64;
 
-                    let Ok(_) = self.poller.add_poller(
-                        &new_client.stream,
-                        EpollEvent::new(EpollFlags::EPOLLIN, new_client.stream.as_raw_fd() as u64),
-                    ) else {
+                    let Ok(()) = self
+                        .poller
+                        .add_poller(&new_client.stream, EpollEvent::new(EpollFlags::EPOLLIN, fd))
+                    else {
                         continue;
                     };
 
@@ -64,19 +65,7 @@ impl Server {
                     continue;
                 };
 
-                let Ok(nbytes) = client.stream.read(&mut buffer) else {
-                    error!(fd = client.stream.as_raw_fd(), "error reading from client");
-                    continue;
-                };
-
-                if nbytes == 0 {
-                    // TODO: handle close by client
-                }
-
-                debug!(
-                    "{nbytes} bytes: {}",
-                    String::from_utf8_lossy(&buffer[..nbytes])
-                );
+                client.handle_client();
             }
         }
     }

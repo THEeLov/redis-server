@@ -1,7 +1,9 @@
 use std::{
     collections::HashMap,
+    io::Read,
     os::{fd::AsRawFd, unix::net::UnixStream},
 };
+use tracing::{debug, error};
 
 #[derive(Debug)]
 pub struct Client {
@@ -20,7 +22,22 @@ impl Client {
         }
     }
 
-    pub fn handle_client() {}
+    pub fn handle_client(&mut self) {
+        let mut buffer = [0u8; 1024];
+        let Ok(nbytes) = self.stream.read(&mut buffer) else {
+            error!(fd = self.stream.as_raw_fd(), "error reading from client");
+            return;
+        };
+
+        if nbytes == 0 {
+            // TODO: handle close by client
+        }
+
+        debug!(
+            "{nbytes} bytes: {}",
+            String::from_utf8_lossy(&buffer[..nbytes])
+        );
+    }
 }
 
 #[derive(Default, Debug)]
