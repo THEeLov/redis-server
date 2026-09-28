@@ -1,14 +1,15 @@
 //! Unix socket server that multiplexes client connections with `epoll`.
 
-use crate::poller::Poller;
+use crate::{
+    connection::{Connection, Connections},
+    poller::Poller,
+};
+/// Connected clients and their per-connection state.
 use std::{
     fs, io,
     os::{fd::AsRawFd, unix::net::UnixListener},
 };
 use tracing::{info, trace, warn};
-/// Connected clients and their per-connection state.
-pub mod client;
-use client::{Client, Clients};
 
 const EPOLL_BUFFER: usize = 1024;
 
@@ -16,7 +17,7 @@ const EPOLL_BUFFER: usize = 1024;
 /// events through an `epoll`-based [`Poller`].
 pub struct Server {
     listener: UnixListener,
-    clients: Clients,
+    clients: Connections,
     poller: Poller<EPOLL_BUFFER>,
 }
 
@@ -32,7 +33,7 @@ impl Server {
     pub fn build(socket_path: &str) -> io::Result<Self> {
         let mut server = Self {
             listener: Self::socket_setup(socket_path)?,
-            clients: Clients::new(),
+            clients: Connections::new(),
             poller: Poller::build()?,
         };
 
@@ -61,11 +62,11 @@ impl Server {
                 }
 
                 // Otherwise handle client request
-                let Some(client) = self.clients.get_mut_client(fd) else {
+                let Some(client) = self.clients.get_mut_connection(fd) else {
                     continue;
                 };
 
-                client.handle_client();
+                client.handle_connection();
 
                 let closed = client.closed;
 
@@ -102,7 +103,7 @@ impl Server {
             return;
         }
 
-        self.clients.add_client(Client::new(stream));
+        self.clients.add_connection(Connection::new(stream));
         info!(fd, "accepted client");
     }
 
@@ -112,7 +113,7 @@ impl Server {
     /// Does nothing if no client is registered under `fd`. A failure to
     /// deregister is logged, and the client is still dropped.
     fn remove_client(&mut self, fd: u64) {
-        if let Some(client) = self.clients.remove_client(fd) {
+        if let Some(client) = self.clients.remove_connection(fd) {
             if let Err(e) = self.poller.deregister(&client.stream) {
                 warn!(fd = fd, error = %e, "failed to deregister client");
             }
