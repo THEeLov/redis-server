@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-nix = { version = "0.31.3", features = ["poll", "event"] }
-tracing = "0.1.44"
+socket-epoll-server = "0.1.0"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[dev-dependencies]
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

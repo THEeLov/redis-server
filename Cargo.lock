@@ -117,8 +117,7 @@ dependencies = [
 name = "redis-server"
 version = "0.1.0"
 dependencies = [
- "nix",
- "tracing",
+ "socket-epoll-server",
  "tracing-subscriber",
 ]
 
@@ -153,6 +152,16 @@ name = "smallvec"
 version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
+
+[[package]]
+name = "socket-epoll-server"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10b7279e25447ec82596b5d2423f1e7c9773db916fd3484ea82ca52ebc87e9aa"
+dependencies = [
+ "nix",
+ "tracing",
+]
 
 [[package]]
 name = "syn"
