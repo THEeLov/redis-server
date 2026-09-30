@@ -186,10 +186,14 @@ Only bulk data may be arbitrary bytes, and that is read with `read_exact`.
 | `GET key`              | bulk string with the value, or null (`$-1`) if the key does not exist |
 | `DEL key [key ...]`    | integer: how many of the keys existed and were removed                |
 | `EXISTS key [key ...]` | integer: how many of the keys exist. A key listed twice counts twice. |
+| `INCR key`             | integer: the value at `key` plus one, which is also stored. A missing key counts as 0. |
+| `DECR key`             | integer: the value at `key` minus one, which is also stored. A missing key counts as 0. |
 
 `SET` options such as `EX`, `PX`, `NX` or `XX` are not supported; sending
 them gives `ERR syntax error`. Keys and values are byte strings; there are
-no other data types (lists, hashes, ...).
+no other data types (lists, hashes, ...). `INCR` and `DECR` work on values
+that are decimal integers in the 64-bit signed range, written without a `+`
+sign, spaces or leading zeros (as `SET k 10` stores them).
 
 ### Example session
 
@@ -225,6 +229,8 @@ You get an error reply and **the connection stays open**:
 | `-ERR unknown command 'NAME'`                      | The command is not supported                           |
 | `-ERR wrong number of arguments for 'get' command` | Too few or too many arguments (lowercase command name) |
 | `-ERR syntax error`                                | `SET` with extra arguments                             |
+| `-ERR value is not an integer or out of range`     | `INCR`/`DECR` on a value that is not a 64-bit integer  |
+| `-ERR increment or decrement would overflow`       | `INCR`/`DECR` past the 64-bit integer range            |
 
 **Protocol errors.** The bytes are not a valid RESP request, so the server
 cannot tell where the next command starts. You get one error reply and then

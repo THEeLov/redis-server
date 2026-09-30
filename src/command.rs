@@ -7,7 +7,8 @@
 //! applies it to the [`Db`] and produces the [`Reply`] for the client.
 //!
 //! Supported commands: `PING [message]`, `ECHO message`, `GET key`,
-//! `SET key value`, `DEL key [key ...]` and `EXISTS key [key ...]`.
+//! `SET key value`, `DEL key [key ...]`, `EXISTS key [key ...]`, `INCR key`
+//! and `DECR key`.
 //! Command names are case-insensitive, as in Redis.
 
 use crate::reply::Reply;
@@ -37,6 +38,14 @@ pub enum Command {
     /// `EXISTS key [key ...]`: replies how many of the keys exist. A key
     /// given twice is counted twice, as in Redis.
     Exists(Vec<Vec<u8>>),
+    /// `INCR key` and `DECR key`: adds `by` to the integer stored at `key`
+    /// (a missing key counts as 0) and replies the new value.
+    IncrBy {
+        /// The key holding the integer.
+        key: Vec<u8>,
+        /// `1` for `INCR`, `-1` for `DECR`.
+        by: i64,
+    },
 }
 
 /// A request that is valid RESP but not a valid command. The connection
@@ -110,6 +119,14 @@ impl Command {
             b"del" => return Err(CommandError::WrongArity("del")),
             b"exists" if !rest.is_empty() => Self::Exists(rest),
             b"exists" => return Err(CommandError::WrongArity("exists")),
+            b"incr" => {
+                let [key] = exactly(rest, "incr")?;
+                Self::IncrBy { key, by: 1 }
+            }
+            b"decr" => {
+                let [key] = exactly(rest, "decr")?;
+                Self::IncrBy { key, by: -1 }
+            }
             _ => return Err(CommandError::Unknown(name.escape_ascii().to_string())),
         };
         Ok(command)
@@ -133,8 +150,33 @@ impl Command {
             Self::Exists(keys) => {
                 Reply::count(keys.iter().filter(|key| db.contains_key(*key)).count())
             }
+            Self::IncrBy { key, by } => incr_by(db, key, by),
         }
     }
+}
+
+/// Adds `by` to the integer stored at `key` and replies the new value. The
+/// value must be a decimal integer that fits in an `i64`, as in Redis.
+fn incr_by(db: &mut Db, key: Vec<u8>, by: i64) -> Reply {
+    let current = match db.get(&key) {
+        None => 0,
+        Some(value) => match std::str::from_utf8(value).ok().and_then(parse_i64) {
+            Some(n) => n,
+            None => return Reply::Error("ERR value is not an integer or out of range".into()),
+        },
+    };
+    let Some(new) = current.checked_add(by) else {
+        return Reply::Error("ERR increment or decrement would overflow".into());
+    };
+    db.insert(key, new.to_string().into_bytes());
+    Reply::Integer(new)
+}
+
+/// Parses an integer the way Redis does: no `+` sign, no spaces and no
+/// leading zeros, so that the value round-trips exactly.
+fn parse_i64(text: &str) -> Option<i64> {
+    let n: i64 = text.parse().ok()?;
+    (n.to_string() == text).then_some(n)
 }
 
 /// Takes exactly `N` arguments for the command `name`.
@@ -203,6 +245,33 @@ mod tests {
     }
 
     #[test]
+    fn incr_and_decr() {
+        let mut db = Db::new();
+        assert_eq!(run(&mut db, &["INCR", "n"]), Reply::Integer(1));
+        assert_eq!(run(&mut db, &["INCR", "n"]), Reply::Integer(2));
+        assert_eq!(run(&mut db, &["GET", "n"]), bulk("2"));
+        assert_eq!(run(&mut db, &["DECR", "m"]), Reply::Integer(-1));
+        run(&mut db, &["SET", "n", "-10"]);
+        assert_eq!(run(&mut db, &["DECR", "n"]), Reply::Integer(-11));
+    }
+
+    #[test]
+    fn incr_rejects_non_integers_and_overflow() {
+        let mut db = Db::new();
+        let not_integer = Reply::Error("ERR value is not an integer or out of range".into());
+        for value in ["abc", "1.5", " 1", "+1", "01", "", "99999999999999999999"] {
+            run(&mut db, &["SET", "k", value]);
+            assert_eq!(run(&mut db, &["INCR", "k"]), not_integer, "{value:?}");
+            assert_eq!(run(&mut db, &["GET", "k"]), bulk(value), "value unchanged");
+        }
+        run(&mut db, &["SET", "k", &i64::MAX.to_string()]);
+        assert_eq!(
+            run(&mut db, &["INCR", "k"]),
+            Reply::Error("ERR increment or decrement would overflow".into())
+        );
+    }
+
+    #[test]
     fn wrong_number_of_arguments() {
         for (words, name) in [
             (&["PING", "a", "b"][..], "ping"),
@@ -212,6 +281,8 @@ mod tests {
             (&["SET", "k"], "set"),
             (&["DEL"], "del"),
             (&["EXISTS"], "exists"),
+            (&["INCR"], "incr"),
+            (&["DECR", "a", "b"], "decr"),
         ] {
             assert_eq!(
                 Command::from_args(args(words)),
