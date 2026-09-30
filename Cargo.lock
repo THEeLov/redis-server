@@ -118,6 +118,7 @@ name = "redis-server"
 version = "0.1.0"
 dependencies = [
  "socket-epoll-server",
+ "tracing",
  "tracing-subscriber",
 ]
 
