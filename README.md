@@ -7,13 +7,28 @@ it works with any client that can send RESP over a Unix socket.
 Everything is stored in memory in one database shared by all clients. Data
 is lost when the server stops.
 
+> **Platform:** Linux only, because networking is built on `epoll`.
+
+## Installation
+
+```sh
+cargo install redis-server
+```
+
+This installs the `redis-server` binary into `~/.cargo/bin`. If the real
+Redis is installed too, whichever comes first in `PATH` wins; run this one
+as `~/.cargo/bin/redis-server` to be sure.
+
 ## Running
 
 ```sh
-cargo run
+redis-server
 # with logs:
-RUST_LOG=info cargo run
+RUST_LOG=info redis-server
 ```
+
+From a clone of the repository, use `cargo run` (or `RUST_LOG=info cargo run`)
+instead.
 
 The server listens on **`/tmp/myredis.sock`**. Any file already at that
 path is removed on start.
@@ -251,3 +266,12 @@ reply.
 
 Networking (accepting clients, `epoll`, buffering) is handled by the
 [`socket-epoll-server`](https://crates.io/crates/socket-epoll-server) crate.
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0
+- MIT license
+
+at your option.
